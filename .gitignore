@@ -1,0 +1,15 @@
+node_modules/
+.env
+*.log
+
+# DKIM private keys - never commit these
+dkim-private.pem
+scripts/dkim-private.pem
+
+mails/
+
+data/
+
+# Tunnel token - use repo secrets instead
+tunnel-token.txt
+CF_TUNNEL_TOKEN*

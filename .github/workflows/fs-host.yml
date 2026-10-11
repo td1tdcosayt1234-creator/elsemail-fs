@@ -1,0 +1,105 @@
+# ElseMail FS — temporary backend hosting on GitHub Actions (max ~6 hours per run)
+#
+# Backend ONLY (API :3000 + local SMTP relay :587, no frontend).
+# Public: https://fs.elsemail.indevs.in via elsemail-fs Cloudflare Tunnel.
+# fs host serves API + /health ONLY (pages 404, see src/index.js host split).
+# Full access: header  x-api-key: <SERVICE_API_KEY secret>
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   CF_TUNNEL_TOKEN_FS  - tunnel token for elsemail-fs (JWT eyJh...)
+#   SERVICE_API_KEY     - root API key for this backend
+#   DKIM_PRIVATE_PEM    - DKIM private key (optional; without it mails go unsigned)
+#
+# NOTE: outbound port 25 is usually blocked on GH runners, so direct-to-MX
+# delivery may fail there. Mails are still accepted + archived, see
+# GET /api/console/mails (x-api-key required).
+
+name: ElseMail FS host (6h)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7 */6 * * *'
+
+jobs:
+  host-backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6h = Actions max per job
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install backend deps
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          ./cloudflared --version
+
+      - name: Write backend env (+ DKIM key)
+        run: |
+          cat > .env <<EOF
+          PORT=3000
+          EMAIL_PROVIDER=${EMAIL_PROVIDER:-smtp}
+          EMAIL_FROM="ElseMail <no-reply@elsemail.indevs.in>"
+          FRONTEND_URL=https://elsemail.indevs.in
+          APP_NAME=ElseMail
+          SERVICE_API_KEY=${SERVICE_API_KEY}
+          TEMP_OPEN=false
+          SMTP_HOST=127.0.0.1
+          SMTP_PORT=587
+          SMTP_SECURE=false
+          MAIL_DOMAIN=elsemail.indevs.in
+          MAIL_HOSTNAME=elsemail.indevs.in
+          DKIM_SELECTOR=local
+          ENABLE_MX_DELIVERY=true
+          EOF
+          if [ -n "${DKIM_PRIVATE_PEM}" ]; then
+            printf '%s' "${DKIM_PRIVATE_PEM}" > scripts/dkim-private.pem
+            echo "DKIM private key installed"
+          else
+            echo "DKIM_PRIVATE_PEM secret empty - mails go unsigned"
+          fi
+        env:
+          SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY }}
+          EMAIL_PROVIDER: ${{ vars.EMAIL_PROVIDER }}
+          DKIM_PRIVATE_PEM: ${{ secrets.DKIM_PRIVATE_PEM }}
+
+      - name: Start SMTP relay + API
+        run: |
+          SMTP_PORT=587 SMTP_HTTP_PORT=8025 ENABLE_MX_DELIVERY=true MAIL_DOMAIN=elsemail.indevs.in MAIL_HOSTNAME=elsemail.indevs.in nohup node src/mail-server.js > smtp.log 2>&1 &
+          echo $! > smtp.pid
+          nohup node src/index.js > api.log 2>&1 &
+          echo $! > api.pid
+          sleep 6
+          curl -fsS http://localhost:3000/health
+          echo "--- api.log ---"; tail -5 api.log
+          echo "--- smtp.log ---"; tail -5 smtp.log
+
+      - name: Start Cloudflare Tunnel (elsemail-fs)
+        run: |
+          nohup ./cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN_FS}" > tunnel.log 2>&1 &
+          echo $! > tunnel.pid
+          sleep 20
+          grep -E "Registered tunnel connection|ERR|error" tunnel.log | tail -8
+        env:
+          CF_TUNNEL_TOKEN_FS: ${{ secrets.CF_TUNNEL_TOKEN_FS }}
+
+      - name: Verify public URL
+        run: |
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS https://fs.elsemail.indevs.in/health; then echo; break; fi
+            echo "retry $i..."; sleep 10
+          done
+
+      - name: Keep alive 6h
+        run: |
+          echo "FS backend live at https://fs.elsemail.indevs.in (API only, x-api-key required)"
+          sleep 21300 # ~5h55m, then job ends (timeout 6h)
+          echo "--- tail logs ---"; tail -20 api.log; tail -10 smtp.log; tail -10 tunnel.log
+        timeout-minutes: 358
