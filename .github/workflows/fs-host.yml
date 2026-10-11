@@ -78,12 +78,22 @@ jobs:
           echo $! > api.pid
           sleep 6
           curl -fsS http://localhost:3000/health
+          curl -fsS http://localhost:8025/ > /dev/null && echo "relay inbox OK"
+          node -e "require('net').connect(587,'127.0.0.1').on('connect',function(){console.log('relay SMTP port OK');this.end()}).on('error',function(e){console.error('relay SMTP FAIL: '+e.message);process.exit(1)})"
           echo "--- api.log ---"; tail -5 api.log
           echo "--- smtp.log ---"; tail -5 smtp.log
 
+      - name: Self-test OTP via localhost (full send path)
+        run: |
+          node -e "(async()=>{const r=await fetch('http://localhost:3000/api/auth/send-otp',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':process.env.KEY},body:JSON.stringify({email:'test@elsemail.indevs.in'})});const j=await r.json();console.log('otp status='+r.status+' '+JSON.stringify(j));if(!r.ok)process.exit(1)})()" 
+          sleep 2
+          curl -fsS http://localhost:8025/api/mails | head -c 500; echo
+        env:
+          KEY: ${{ secrets.SERVICE_API_KEY }}
+
       - name: Start Cloudflare Tunnel (elsemail-fs)
         run: |
-          nohup ./cloudflared tunnel --no-autoupdate run --token "${CF_TUNNEL_TOKEN_FS}" > tunnel.log 2>&1 &
+          nohup ./cloudflared tunnel --no-autoupdate --protocol http2 run --token "${CF_TUNNEL_TOKEN_FS}" > tunnel.log 2>&1 &
           echo $! > tunnel.pid
           sleep 20
           grep -E "Registered tunnel connection|ERR|error" tunnel.log | tail -8
