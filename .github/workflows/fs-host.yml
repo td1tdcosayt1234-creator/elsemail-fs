@@ -52,7 +52,7 @@ jobs:
           SERVICE_API_KEY=${SERVICE_API_KEY}
           TEMP_OPEN=false
           SMTP_HOST=127.0.0.1
-          SMTP_PORT=587
+          SMTP_PORT=2587
           SMTP_SECURE=false
           MAIL_DOMAIN=elsemail.indevs.in
           MAIL_HOSTNAME=elsemail.indevs.in
@@ -72,14 +72,14 @@ jobs:
 
       - name: Start SMTP relay + API
         run: |
-          SMTP_PORT=587 SMTP_HTTP_PORT=8025 ENABLE_MX_DELIVERY=true MAIL_DOMAIN=elsemail.indevs.in MAIL_HOSTNAME=elsemail.indevs.in nohup node src/mail-server.js > smtp.log 2>&1 &
+          SMTP_PORT=2587 SMTP_HTTP_PORT=8025 ENABLE_MX_DELIVERY=true MAIL_DOMAIN=elsemail.indevs.in MAIL_HOSTNAME=elsemail.indevs.in nohup node src/mail-server.js > smtp.log 2>&1 &
           echo $! > smtp.pid
           nohup node src/index.js > api.log 2>&1 &
           echo $! > api.pid
           sleep 6
           curl -fsS http://localhost:3000/health
           curl -fsS http://localhost:8025/ > /dev/null && echo "relay inbox OK"
-          node -e "require('net').connect(587,'127.0.0.1').on('connect',function(){console.log('relay SMTP port OK');this.end()}).on('error',function(e){console.error('relay SMTP FAIL: '+e.message);process.exit(1)})"
+          node -e "require('net').connect(2587,'127.0.0.1').on('connect',function(){console.log('relay SMTP port OK');this.end()}).on('error',function(e){console.error('relay SMTP FAIL: '+e.message);process.exit(1)})"
           echo "--- api.log ---"; tail -5 api.log
           echo "--- smtp.log ---"; tail -5 smtp.log
 
