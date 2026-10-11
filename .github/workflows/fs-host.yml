@@ -70,6 +70,12 @@ jobs:
           EMAIL_PROVIDER: ${{ vars.EMAIL_PROVIDER }}
           DKIM_PRIVATE_PEM: ${{ secrets.DKIM_PRIVATE_PEM }}
 
+      - name: Sync runner IP into SPF (direct-to-MX needs it)
+        run: |
+          node scripts/spf-sync.js || echo "SPF sync failed, continuing with existing SPF"
+        env:
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+
       - name: Start SMTP relay + API
         run: |
           SMTP_PORT=2587 SMTP_HTTP_PORT=8025 ENABLE_MX_DELIVERY=true MAIL_DOMAIN=elsemail.indevs.in MAIL_HOSTNAME=elsemail.indevs.in nohup node src/mail-server.js > smtp.log 2>&1 &
